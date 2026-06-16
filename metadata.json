@@ -1,0 +1,6 @@
+{
+  "name": "MamaCare",
+  "description": "A pregnancy support application offering biodata registration, clinic visit reminders, and an intelligent symptom tracker with maternal advice.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
