@@ -471,7 +471,15 @@ export default function App() {
       case "registration":
         return <RegistrationView biodata={biodata} onRegister={handleRegister} onReset={handleResetBiodata} />;
       case "clinics":
-        return <ClinicsView reminders={clinics} onAddReminder={handleAddClinic} onToggleStatus={handleToggleClinicStatus} />;
+        return (
+          <ClinicsView
+            reminders={clinics}
+            onAddReminder={handleAddClinic}
+            onToggleStatus={handleToggleClinicStatus}
+            gestationalWeeks={currentWeeks}
+            dueDate={biodata.dueDate}
+          />
+        );
       case "symptoms":
         return <SymptomView biodata={biodata} logs={symptoms} onAddLog={handleAddSymptomLog} onClearLogs={handleClearSymptomLogs} authToken={getAuthTokenValue()} />;
       default:
