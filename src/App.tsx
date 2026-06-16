@@ -4,7 +4,7 @@ import DashboardView from "./components/DashboardView";
 import RegistrationView from "./components/RegistrationView";
 import ClinicsView from "./components/ClinicsView";
 import SymptomView from "./components/SymptomView";
-import { getSupabase } from "./lib/supabase";
+import { getSupabase, setSupabaseConfig } from "./lib/supabase";
 import {
   Heart,
   Home,
@@ -121,8 +121,32 @@ export default function App() {
   const [supabaseSuccessMsg, setSupabaseSuccessMsg] = useState<string>("");
   const [supabaseErrorMsg, setSupabaseErrorMsg] = useState<string>("");
   const [isSupabaseAuthenticating, setIsSupabaseAuthenticating] = useState<boolean>(false);
+  const [onboardingError, setOnboardingError] = useState<string>("");
+  const [isOnboardingAuthenticating, setIsOnboardingAuthenticating] = useState<boolean>(false);
   const [backendSecurityReport, setBackendSecurityReport] = useState<any>(null);
   const [securityReportRefresh, setSecurityReportRefresh] = useState<number>(0);
+
+  // Dynamic config loading from server at startup
+  useEffect(() => {
+    const loadSupabaseKeys = async () => {
+      try {
+        const res = await fetch("/api/supabase-config");
+        if (res.ok) {
+          const config = await res.json();
+          if (config.supabaseUrl && config.supabaseAnonKey) {
+            setSupabaseConfig(config.supabaseUrl, config.supabaseAnonKey);
+            // set token mode to check real_supabase if a token exists
+            if (localStorage.getItem("mamacare_supabase_token")) {
+              setTokenMode("real_supabase");
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Retrying/falling back during Supabase dynamic key fetch:", err);
+      }
+    };
+    loadSupabaseKeys();
+  }, []);
 
   // First-time onboarding email login states
   const [loginEmail, setLoginEmail] = useState("");
@@ -168,13 +192,88 @@ export default function App() {
     setLoginWeeks(computedWeeks);
   };
 
-  const handleOnboardingSubmit = (e: React.FormEvent) => {
+  const handleOnboardingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginEmail.trim() || !loginName.trim()) return;
+    setOnboardingError("");
+    setIsOnboardingAuthenticating(true);
+
+    if (!loginEmail.trim() || !loginName.trim()) {
+      setOnboardingError("Please enter your name and email.");
+      setIsOnboardingAuthenticating(false);
+      return;
+    }
 
     const finalWeeks = Number(loginWeeks) || 12;
     // ensure synchronized state when user submits
     const finalDueDate = loginDueDate || calculateDueDateFromWeeks(finalWeeks);
+
+    const client = getSupabase();
+    if (client) {
+      try {
+        // Attempt sign up. This creates the user record so the administrator see them in Supabase
+        const { data, error: signUpError } = await client.auth.signUp({
+          email: loginEmail.trim(),
+          password: loginPassword || "MamaCarePass123!",
+          options: {
+            data: {
+              full_name: loginName.trim(),
+              gestational_weeks: finalWeeks,
+              due_date: finalDueDate,
+            }
+          }
+        });
+
+        if (signUpError) {
+          // If already signed up or exists, let's auto sign-in with password!
+          if (
+            signUpError.message.toLowerCase().includes("already registered") || 
+            signUpError.message.toLowerCase().includes("already exists") || 
+            signUpError.message.toLowerCase().includes("taken")
+          ) {
+            const { data: signInData, error: signInError } = await client.auth.signInWithPassword({
+              email: loginEmail.trim(),
+              password: loginPassword || "MamaCarePass123!",
+            });
+
+            if (signInError) {
+              throw signInError;
+            }
+
+            if (signInData?.session) {
+              setSupabaseToken(signInData.session.access_token);
+              setTokenMode("real_supabase");
+            }
+          } else {
+            throw signUpError;
+          }
+        } else {
+          if (data?.session) {
+            setSupabaseToken(data.session.access_token);
+            setTokenMode("real_supabase");
+          } else {
+            // Under Supabase, sometimes confirmation is required before sign in,
+            // but we can try to log in immediately as well in case sign-up didn't return session
+            try {
+              const { data: loginData } = await client.auth.signInWithPassword({
+                email: loginEmail.trim(),
+                password: loginPassword || "MamaCarePass123!",
+              });
+              if (loginData?.session) {
+                setSupabaseToken(loginData.session.access_token);
+                setTokenMode("real_supabase");
+              }
+            } catch (ignore) {}
+          }
+        }
+      } catch (authErr: any) {
+        console.error("Supabase Authenticator error:", authErr);
+        setOnboardingError(authErr.message || "Failed to establish a secure database sync session.");
+        setIsOnboardingAuthenticating(false);
+        return;
+      }
+    } else {
+      console.warn("Supabase is not configured yet. Proceeding in offline mock mode.");
+    }
 
     const newProfile: Biodata = {
       fullName: loginName.trim(),
@@ -188,6 +287,7 @@ export default function App() {
     };
 
     setBiodata(newProfile);
+    setIsOnboardingAuthenticating(false);
     setActiveTab("home");
   };
 
@@ -380,15 +480,22 @@ export default function App() {
               </div>
 
               <form onSubmit={handleOnboardingSubmit} className="space-y-4">
+                {onboardingError && (
+                  <div className="bg-rose-50 border border-rose-100 text-rose-600 text-[11px] p-3 rounded-xl font-medium animate-fade-in" id="onboarding-error-box">
+                     ⚠️ {onboardingError}
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">First Name or Loving Name *</label>
                   <input
                     type="text"
                     required
+                    disabled={isOnboardingAuthenticating}
                     placeholder="e.g. Amina"
                     value={loginName}
                     onChange={(e) => setLoginName(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none disabled:opacity-60"
                   />
                 </div>
 
@@ -397,10 +504,11 @@ export default function App() {
                   <input
                     type="email"
                     required
+                    disabled={isOnboardingAuthenticating}
                     placeholder="mother@example.com"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none disabled:opacity-60"
                   />
                 </div>
 
@@ -409,10 +517,11 @@ export default function App() {
                   <input
                     type="password"
                     required
+                    disabled={isOnboardingAuthenticating}
                     placeholder="••••••••"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none disabled:opacity-60"
                   />
                 </div>
 
@@ -421,12 +530,13 @@ export default function App() {
                   <input
                     type="number"
                     required
+                    disabled={isOnboardingAuthenticating}
                     min={1}
                     max={45}
                     placeholder="e.g. 12"
                     value={loginWeeks || ""}
                     onChange={(e) => handleOnboardingWeeksChange(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none disabled:opacity-60"
                   />
                 </div>
 
@@ -435,9 +545,10 @@ export default function App() {
                   <input
                     type="date"
                     required
+                    disabled={isOnboardingAuthenticating}
                     value={loginDueDate}
                     onChange={(e) => handleOnboardingDueDateChange(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-400 focus:bg-white text-slate-800 rounded-xl text-sm outline-none disabled:opacity-60"
                   />
                   {loginDueDate && (
                     <p className="text-xs font-semibold text-emerald-600 mt-1">
@@ -449,9 +560,17 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-xl shadow-md cursor-pointer transition text-xs tracking-wider uppercase mt-4"
+                  disabled={isOnboardingAuthenticating}
+                  className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-xl shadow-md cursor-pointer transition text-xs tracking-wider uppercase mt-4 disabled:opacity-75 flex items-center justify-center space-x-2"
                 >
-                  Open Prenatal Companion
+                  {isOnboardingAuthenticating ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin text-white" />
+                      <span>Securing session on Supabase...</span>
+                    </>
+                  ) : (
+                    <span>Open Prenatal Companion</span>
+                  )}
                 </button>
               </form>
 
@@ -507,6 +626,12 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-2">
+            {tokenMode === "real_supabase" && (
+              <span className="hidden sm:inline-flex items-center space-x-1 px-2.5 py-1.5 bg-emerald-50 border border-emerald-100/70 text-emerald-700 text-[10px] font-bold rounded-2xl shadow-xs animate-pulse">
+                <Database className="h-3.5 w-3.5 text-emerald-500" />
+                <span>Supabase Active Sync</span>
+              </span>
+            )}
             <span className="inline-flex items-center space-x-1 px-3 py-1.5 bg-rose-50/60 border border-rose-100/50 text-rose-600 text-[11px] font-semibold rounded-2xl">
               <Sparkles className="h-3.5 w-3.5 animate-pulse text-rose-500" />
               <span>Week {currentWeeks}</span>

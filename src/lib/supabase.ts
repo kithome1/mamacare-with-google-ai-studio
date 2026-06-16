@@ -1,5 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 
+let dynamicSupabaseUrl = "";
+let dynamicSupabaseAnonKey = "";
+
+/**
+ * Configure Supabase credentials dynamically at runtime (e.g. from server configuration).
+ */
+export function setSupabaseConfig(url: string, key: string) {
+  dynamicSupabaseUrl = url;
+  dynamicSupabaseAnonKey = key;
+}
+
 /**
  * Access the lazy-initialized Supabase Client.
  * This ensures that if the environment variables are not yet provided, 
@@ -7,15 +18,18 @@ import { createClient } from "@supabase/supabase-js";
  * to simulated sandbox authentication.
  */
 export function getSupabase() {
-  // Try to load from Vite public env
-  let supabaseUrl = "";
-  let supabaseAnonKey = "";
+  // Try dynamic runtime config first
+  let supabaseUrl = dynamicSupabaseUrl;
+  let supabaseAnonKey = dynamicSupabaseAnonKey;
 
-  try {
-    supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "";
-    supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "";
-  } catch (e) {
-    // Falls back in non-Vite contexts
+  // Try to load from Vite public env if not set
+  if (!supabaseUrl || !supabaseAnonKey) {
+    try {
+      supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "";
+      supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "";
+    } catch (e) {
+      // Falls back in non-Vite contexts
+    }
   }
 
   // Fallback to process.env if available (such as in server environments)
