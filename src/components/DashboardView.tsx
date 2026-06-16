@@ -64,8 +64,8 @@ export default function DashboardView({ biodata, onNavigate }: DashboardViewProp
             Welcome to your personal digital prenatal dashboard. We are here to keep your journey safe, informed, and beautifully supported.
           </p>
           {daysRemaining !== null && (
-            <div className="pt-2 flex items-center justify-center md:justify-start space-x-2 text-rose-500 font-semibold text-sm" id="delivery-countdown-badge">
-              <Calendar className="h-4 w-4 shrink-0" />
+            <div className="pt-2 flex items-center justify-center md:justify-start space-x-2 text-emerald-600 font-semibold text-sm" id="delivery-countdown-badge">
+              <Calendar className="h-4 w-4 shrink-0 text-emerald-500" />
               <span>{daysRemaining} days remaining till your estimated delivery!</span>
             </div>
           )}
